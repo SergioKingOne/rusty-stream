@@ -1,7 +1,7 @@
+use anyhow::Result;
 use rdkafka::config::ClientConfig;
 use rdkafka::producer::{FutureProducer, FutureRecord};
 use serde::{Deserialize, Serialize};
-use anyhow::Result;
 use tokio::time::{self, Duration};
 
 #[derive(Serialize, Deserialize)]
@@ -35,9 +35,7 @@ async fn main() -> Result<()> {
         // Send the message asynchronously
         match producer
             .send(
-                FutureRecord::to(topic)
-                    .payload(&payload)
-                    .key("sensor-123"),
+                FutureRecord::to(topic).payload(&payload).key("sensor-123"),
                 Duration::from_secs(0),
             )
             .await

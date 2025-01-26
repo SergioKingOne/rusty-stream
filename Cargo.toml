@@ -8,11 +8,11 @@ default-members = ["api_service", "data_producer", "streaming_service"]
 debug = true
 
 [workspace.dependencies]
-tokio = { version = "1.28", features = ["macros"] }
+tokio = { version = "1.28", features = ["full"] }
 rdkafka = "0.37.0"
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 anyhow = "1.0"
-redis = "0.28.2"
+redis = { version = "0.28.2", features = ["aio", "tokio-comp"] }
 chrono = "0.4"
-sqlx = "0.8.3"
+sqlx = { version = "0.8.3", features = ["postgres"] }

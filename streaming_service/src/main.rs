@@ -1,15 +1,13 @@
 use anyhow::Result;
-use rdkafka::consumer::{CommitMode, Consumer, StreamConsumer};
 use rdkafka::config::ClientConfig;
+use rdkafka::consumer::{CommitMode, Consumer, StreamConsumer};
 use rdkafka::Message;
+use redis::AsyncCommands;
 use serde::{Deserialize, Serialize};
-
-use redis::{AsyncCommands};
 use sqlx::postgres::PgPoolOptions;
-use sqlx::Executor;
 use tokio::spawn;
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize, Clone)]
 struct SensorData {
     sensor_id: String,
     value: f64,
@@ -41,7 +39,6 @@ async fn main() -> Result<()> {
 
     // 2) Initialize Redis Client
     let redis_client = redis::Client::open("redis://redis:6379")?;
-    let mut redis_conn = redis_client.get_async_connection().await?;
 
     // 3) Set up Kafka consumer
     let consumer: StreamConsumer = ClientConfig::new()
@@ -97,10 +94,9 @@ async fn store_in_postgres(pool: sqlx::Pool<sqlx::Postgres>, data: SensorData) -
     Ok(())
 }
 
-async fn cache_in_redis(client: redis::Client, data: SensorData) -> Result<()> {
-    let mut conn = client.get_async_connection().await?;
+async fn cache_in_redis(client: redis::Client, data: SensorData) -> Result<(), anyhow::Error> {
+    let mut conn = client.get_multiplexed_async_connection().await?;
     let cache_key = format!("sensor:{}", data.sensor_id);
-    // We store the last known value for quick retrieval
-    conn.set(cache_key, data.value).await?;
+    conn.set::<_, _, ()>(cache_key, data.value).await?;
     Ok(())
 }

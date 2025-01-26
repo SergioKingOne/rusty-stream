@@ -14,3 +14,4 @@ chrono = { workspace = true }
 
 axum = "0.8.1"
 tower = "0.5.2"
+axum-server = "0.7.1"

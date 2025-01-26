@@ -9,3 +9,6 @@ rdkafka = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 anyhow = { workspace = true }
+chrono = { workspace = true }
+
+rand = "0.8"
