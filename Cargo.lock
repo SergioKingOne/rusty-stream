@@ -353,11 +353,13 @@ name = "data_producer"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "async-trait",
  "chrono",
  "rand",
  "rdkafka",
  "serde",
  "serde_json",
+ "thiserror",
  "tokio",
 ]
 
@@ -1781,12 +1783,14 @@ name = "streaming_service"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "async-trait",
  "chrono",
  "rdkafka",
  "redis",
  "serde",
  "serde_json",
  "sqlx",
+ "thiserror",
  "tokio",
 ]
 
