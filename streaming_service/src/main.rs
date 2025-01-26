@@ -1,106 +1,226 @@
 use anyhow::Result;
-use rdkafka::consumer::{CommitMode, Consumer, StreamConsumer};
-use rdkafka::config::ClientConfig;
-use rdkafka::Message;
+use async_trait::async_trait;
+use rdkafka::{
+    config::ClientConfig,
+    consumer::{Consumer, StreamConsumer},
+    Message,
+};
+use redis::AsyncCommands;
 use serde::{Deserialize, Serialize};
-
-use redis::{AsyncCommands};
 use sqlx::postgres::PgPoolOptions;
-use sqlx::Executor;
+use std::sync::Arc;
 use tokio::spawn;
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize, Clone)]
 struct SensorData {
     sensor_id: String,
     value: f64,
     timestamp: i64,
 }
 
-#[tokio::main]
-async fn main() -> Result<()> {
-    // 1) Initialize Postgres Pool
-    let db_url = "postgres://postgres:postgres@postgres:5432/mydb";
-    let pool = PgPoolOptions::new()
-        .max_connections(5)
-        .connect(db_url)
+#[async_trait]
+trait EventConsumer: Send + Sync {
+    async fn consume(&self) -> Result<Option<String>, EventConsumerError>;
+    async fn commit(&self) -> Result<(), EventConsumerError>;
+}
+
+#[async_trait]
+trait SensorDataRepository: Send + Sync {
+    async fn insert_sensor_data(&self, data: &SensorData) -> Result<(), StorageError>;
+}
+
+#[async_trait]
+trait CacheRepository: Send + Sync {
+    async fn cache_value(&self, key: &str, value: f64) -> Result<(), StorageError>;
+}
+
+struct KafkaEventConsumer {
+    consumer: StreamConsumer,
+}
+
+impl KafkaEventConsumer {
+    fn new(bootstrap_servers: &str, group_id: &str, topics: &[&str]) -> Result<Self> {
+        let consumer: StreamConsumer = ClientConfig::new()
+            .set("group.id", group_id)
+            .set("bootstrap.servers", bootstrap_servers)
+            .set("enable.partition.eof", "false")
+            .create()?;
+
+        consumer.subscribe(topics)?;
+        Ok(Self { consumer })
+    }
+}
+
+#[async_trait]
+impl EventConsumer for KafkaEventConsumer {
+    async fn consume(&self) -> Result<Option<String>, EventConsumerError> {
+        match self.consumer.recv().await {
+            Ok(message) => {
+                let payload = match message.payload_view::<str>() {
+                    Some(Ok(s)) => Ok(Some(s.to_string())),
+                    Some(Err(e)) => Err(EventConsumerError::Utf8(e)),
+                    None => Ok(None),
+                }?;
+                Ok(payload)
+            }
+            Err(e) => Err(e.into()),
+        }
+    }
+
+    async fn commit(&self) -> Result<(), EventConsumerError> {
+        // Implementation would properly commit offsets
+        Ok(())
+    }
+}
+
+struct PostgresSensorRepository {
+    pool: sqlx::PgPool,
+}
+
+impl PostgresSensorRepository {
+    async fn new(db_url: &str) -> Result<Self> {
+        let pool = PgPoolOptions::new()
+            .max_connections(5)
+            .connect(db_url)
+            .await?;
+
+        sqlx::query(
+            r#"CREATE TABLE IF NOT EXISTS sensor_data (
+                id SERIAL PRIMARY KEY,
+                sensor_id TEXT NOT NULL,
+                value DOUBLE PRECISION,
+                ts BIGINT
+            )"#,
+        )
+        .execute(&pool)
         .await?;
 
-    // We can ensure the table exists (very minimal example)
-    sqlx::query(
-        r#"
-        CREATE TABLE IF NOT EXISTS sensor_data (
-            id SERIAL PRIMARY KEY,
-            sensor_id TEXT NOT NULL,
-            value DOUBLE PRECISION,
-            ts BIGINT
-        )
-        "#,
-    )
-    .execute(&pool)
-    .await?;
+        Ok(Self { pool })
+    }
+}
 
-    // 2) Initialize Redis Client
-    let redis_client = redis::Client::open("redis://redis:6379")?;
-    let mut redis_conn = redis_client.get_async_connection().await?;
+#[async_trait]
+impl SensorDataRepository for PostgresSensorRepository {
+    async fn insert_sensor_data(&self, data: &SensorData) -> Result<(), StorageError> {
+        sqlx::query(r#"INSERT INTO sensor_data (sensor_id, value, ts) VALUES ($1, $2, $3)"#)
+            .bind(&data.sensor_id)
+            .bind(data.value)
+            .bind(data.timestamp)
+            .execute(&self.pool)
+            .await?;
 
-    // 3) Set up Kafka consumer
-    let consumer: StreamConsumer = ClientConfig::new()
-        .set("group.id", "streaming-service-group")
-        .set("bootstrap.servers", "kafka:9092")
-        .set("enable.partition.eof", "false")
-        .create()?;
+        Ok(())
+    }
+}
 
-    consumer.subscribe(&["sensor-data"])?;
+struct RedisCacheRepository {
+    client: redis::Client,
+}
 
-    // 4) Continuous stream consumption
-    loop {
-        match consumer.recv().await {
-            Err(err) => {
-                eprintln!("Kafka error: {}", err);
+impl RedisCacheRepository {
+    fn new(redis_url: &str) -> Result<Self> {
+        let client = redis::Client::open(redis_url)?;
+        Ok(Self { client })
+    }
+}
+
+#[async_trait]
+impl CacheRepository for RedisCacheRepository {
+    async fn cache_value(&self, key: &str, value: f64) -> Result<(), StorageError> {
+        let mut conn = self.client.get_multiplexed_async_connection().await?;
+        conn.set::<_, _, ()>(key, value).await?;
+        Ok(())
+    }
+}
+
+struct MessageProcessor {
+    consumer: Arc<dyn EventConsumer>,
+    sensor_repo: Arc<dyn SensorDataRepository>,
+    cache_repo: Arc<dyn CacheRepository>,
+}
+
+impl MessageProcessor {
+    async fn process_message(&self, payload: &str) -> Result<()> {
+        let sensor_data: SensorData = serde_json::from_str(payload)?;
+        let sensor_data_clone = sensor_data.clone(); // Clone here before the spawns
+
+        let sensor_repo = self.sensor_repo.clone();
+        let cache_repo = self.cache_repo.clone();
+        let sensor_id = sensor_data.sensor_id.clone();
+
+        spawn(async move {
+            if let Err(e) = sensor_repo.insert_sensor_data(&sensor_data).await {
+                eprintln!("Failed to store in Postgres: {}", e);
             }
-            Ok(m) => {
-                if let Some(payload) = m.payload_view::<str>() {
-                    match payload {
-                        Ok(json_str) => {
-                            if let Ok(sensor_data) = serde_json::from_str::<SensorData>(json_str) {
-                                // Process the data:
-                                spawn(store_in_postgres(pool.clone(), sensor_data.clone()));
-                                spawn(cache_in_redis(redis_client.clone(), sensor_data));
-                            } else {
-                                eprintln!("Failed to deserialize JSON: {}", json_str);
-                            }
-                        }
-                        Err(_e) => {
-                            eprintln!("Error reading payload as str");
-                        }
+        });
+
+        spawn(async move {
+            let cache_key = format!("sensor:{}", sensor_id);
+            if let Err(e) = cache_repo
+                .cache_value(&cache_key, sensor_data_clone.value)
+                .await
+            {
+                // Use the clone here
+                eprintln!("Failed to cache in Redis: {}", e);
+            }
+        });
+
+        Ok(())
+    }
+
+    async fn run(&self) -> Result<()> {
+        loop {
+            match self.consumer.consume().await {
+                Ok(Some(payload)) => {
+                    if let Err(e) = self.process_message(&payload).await {
+                        eprintln!("Error processing message: {}", e);
                     }
+                    self.consumer.commit().await?;
                 }
-                consumer.commit_message(&m, CommitMode::Async).unwrap();
+                Ok(None) => continue,
+                Err(e) => eprintln!("Consumer error: {}", e),
             }
         }
     }
 }
 
-async fn store_in_postgres(pool: sqlx::Pool<sqlx::Postgres>, data: SensorData) -> Result<()> {
-    sqlx::query(
-        r#"
-            INSERT INTO sensor_data (sensor_id, value, ts)
-            VALUES ($1, $2, $3)
-        "#,
-    )
-    .bind(data.sensor_id)
-    .bind(data.value)
-    .bind(data.timestamp)
-    .execute(&pool)
-    .await?;
-
-    Ok(())
+#[derive(Debug, thiserror::Error)]
+enum EventConsumerError {
+    #[error("Kafka error: {0}")]
+    Kafka(#[from] rdkafka::error::KafkaError),
+    #[error("UTF-8 error: {0}")]
+    Utf8(#[from] std::str::Utf8Error),
 }
 
-async fn cache_in_redis(client: redis::Client, data: SensorData) -> Result<()> {
-    let mut conn = client.get_async_connection().await?;
-    let cache_key = format!("sensor:{}", data.sensor_id);
-    // We store the last known value for quick retrieval
-    conn.set(cache_key, data.value).await?;
-    Ok(())
+#[derive(Debug, thiserror::Error)]
+enum StorageError {
+    #[error("Database error: {0}")]
+    Database(#[from] sqlx::Error),
+    #[error("Redis error: {0}")]
+    Redis(#[from] redis::RedisError),
+    #[error("Serialization error: {0}")]
+    Serialization(#[from] serde_json::Error),
+}
+
+#[tokio::main]
+async fn main() -> Result<()> {
+    let consumer = Arc::new(KafkaEventConsumer::new(
+        "kafka:9092",
+        "streaming-service-group",
+        &["sensor-data"],
+    )?);
+
+    let sensor_repo = Arc::new(
+        PostgresSensorRepository::new("postgres://postgres:postgres@postgres:5432/mydb").await?,
+    );
+
+    let cache_repo = Arc::new(RedisCacheRepository::new("redis://redis:6379")?);
+
+    let processor = MessageProcessor {
+        consumer,
+        sensor_repo,
+        cache_repo,
+    };
+
+    processor.run().await
 }

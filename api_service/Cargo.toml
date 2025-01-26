@@ -11,6 +11,8 @@ anyhow = { workspace = true }
 sqlx = { workspace = true }
 redis = { workspace = true }
 chrono = { workspace = true }
+async-trait = { workspace = true }
 
 axum = "0.8.1"
 tower = "0.5.2"
+axum-server = "0.7.1"

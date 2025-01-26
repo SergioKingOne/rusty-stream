@@ -1,0 +1,71 @@
+version: "3.8"
+services:
+  zookeeper:
+    image: wurstmeister/zookeeper:latest
+    container_name: zookeeper
+    ports:
+      - "2181:2181"
+
+  kafka:
+    image: wurstmeister/kafka:latest
+    container_name: kafka
+    ports:
+      - "9092:9092"
+    environment:
+      KAFKA_BROKER_ID: 1
+      KAFKA_ZOOKEEPER_CONNECT: zookeeper:2181
+      KAFKA_LISTENERS: PLAINTEXT://0.0.0.0:9092
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka:9092
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+    depends_on:
+      - zookeeper
+
+  # 2) Postgres
+  postgres:
+    image: postgres:14
+    container_name: postgres
+    environment:
+      POSTGRES_DB: mydb
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+    ports:
+      - "5432:5432"
+
+  # 3) Redis
+  redis:
+    image: redis:7
+    container_name: redis
+    ports:
+      - "6379:6379"
+
+  # 4) data-producer
+  data-producer:
+    build:
+      context: ./data-producer
+    container_name: data-producer
+    depends_on:
+      - kafka
+    # If you want the producer to run indefinitely, leave it.
+    # If you'd like to keep it optional, remove or comment out.
+    # It's an infinite loop right now, so let's just keep it running for the example.
+
+  # 5) streaming-service
+  streaming-service:
+    build:
+      context: ./streaming-service
+    container_name: streaming-service
+    depends_on:
+      - kafka
+      - postgres
+      - redis
+
+  # 6) api-service
+  api-service:
+    build:
+      context: ./api-service
+    container_name: api-service
+    ports:
+      - "3000:3000"
+    depends_on:
+      - postgres
+      - redis
