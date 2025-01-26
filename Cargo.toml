@@ -15,6 +15,6 @@ serde_json = "1.0"
 anyhow = "1.0"
 redis = { version = "0.28.2", features = ["aio", "tokio-comp"] }
 chrono = "0.4"
-sqlx = { version = "0.8.3", features = ["postgres"] }
+sqlx = { version = "0.8.3", features = ["postgres", "runtime-tokio"] }
 async-trait = "0.1"
 thiserror = "2.0.11"
