@@ -6,5 +6,5 @@ COPY . .
 RUN cargo build --release
 
 FROM debian:bullseye-slim
-COPY --from=builder /app/target/release/data-producer /usr/local/bin/data-producer
-ENTRYPOINT ["/usr/local/bin/data-producer"]
+COPY --from=builder /app/target/release/data_producer /usr/local/bin/data_producer
+ENTRYPOINT ["/usr/local/bin/data_producer"]

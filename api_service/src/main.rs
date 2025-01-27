@@ -77,7 +77,7 @@ struct AppState {
 
 #[tokio::main]
 async fn main() -> Result<()> {
-    let db_url = "postgres://postgres:postgres@postgres:5432/mydb";
+    let db_url = "postgres://postgres:postgres@127.0.0.1:5432/rusty_stream";
     let pool = PgPoolOptions::new().connect(db_url).await?;
 
     let redis_client = redis::Client::open("redis://redis:6379")?;

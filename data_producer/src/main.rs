@@ -111,7 +111,7 @@ async fn main() -> Result<()> {
     let config = ProducerConfig {
         topic: "sensor-data".to_string(),
         interval_seconds: 2,
-        bootstrap_servers: "kafka:9092".to_string(),
+        bootstrap_servers: "127.0.0.1:9092".to_string(),
     };
 
     let producer = Arc::new(KafkaEventProducer::new(&config.bootstrap_servers)?);

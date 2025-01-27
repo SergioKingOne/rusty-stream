@@ -172,6 +172,7 @@ impl MessageProcessor {
         loop {
             match self.consumer.consume().await {
                 Ok(Some(payload)) => {
+                    println!("Received message: {}", payload);
                     if let Err(e) = self.process_message(&payload).await {
                         eprintln!("Error processing message: {}", e);
                     }
@@ -205,16 +206,17 @@ enum StorageError {
 #[tokio::main]
 async fn main() -> Result<()> {
     let consumer = Arc::new(KafkaEventConsumer::new(
-        "kafka:9092",
+        "127.0.0.1:9092",
         "streaming-service-group",
         &["sensor-data"],
     )?);
 
     let sensor_repo = Arc::new(
-        PostgresSensorRepository::new("postgres://postgres:postgres@postgres:5432/mydb").await?,
+        PostgresSensorRepository::new("postgres://postgres:postgres@127.0.0.1:5432/rusty_stream")
+            .await?,
     );
 
-    let cache_repo = Arc::new(RedisCacheRepository::new("redis://redis:6379")?);
+    let cache_repo = Arc::new(RedisCacheRepository::new("redis://127.0.0.1:6379")?);
 
     let processor = MessageProcessor {
         consumer,
