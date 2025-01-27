@@ -6,5 +6,5 @@ COPY . .
 RUN cargo build --release
 
 FROM debian:bullseye-slim
-COPY --from=builder /app/target/release/streaming-service /usr/local/bin/streaming-service
-ENTRYPOINT ["/usr/local/bin/streaming-service"]
+COPY --from=builder /app/target/release/streaming_service /usr/local/bin/streaming_service
+ENTRYPOINT ["/usr/local/bin/streaming_service"]
