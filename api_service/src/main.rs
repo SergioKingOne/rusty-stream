@@ -80,7 +80,7 @@ async fn main() -> Result<()> {
     let db_url = "postgres://postgres:postgres@127.0.0.1:5432/rusty_stream";
     let pool = PgPoolOptions::new().connect(db_url).await?;
 
-    let redis_client = redis::Client::open("redis://redis:6379")?;
+    let redis_client = redis::Client::open("redis://127.0.0.1:6379")?;
 
     let state = AppState {
         sensor_data: Arc::new(PostgresSensorDataStore { pool }),
@@ -91,7 +91,7 @@ async fn main() -> Result<()> {
 
     let app = Router::new()
         .route("/data", get(get_data))
-        .route("/recent/:sensor_id", get(get_recent))
+        .route("/recent/{sensor_id}", get(get_recent))
         .route("/data", post(post_data))
         .with_state(state);
 
